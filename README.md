@@ -9,3 +9,8 @@
 
 ### my datasets
 ![image](https://github.com/user-attachments/assets/ddbae547-5b99-4ba2-8dc3-dbbf47db4fde)
+
+### 参考
+https://github.com/NVIDIA-AI-IOT/yolo_deepstream
+
+https://github.com/Caroline-wen/yolov8_QAT
