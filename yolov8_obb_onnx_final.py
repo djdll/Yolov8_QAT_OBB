@@ -8,11 +8,13 @@ import sys
 import cv2
 import numpy as np
 import math
-# infer onnx obb model
-class_names = ["class names"]      
-input_shape = (640, 640)  # h w
-input_height = 640
-input_width = 640
+'''
+单图测试
+'''
+class_names = ["Barcode"]      
+input_shape = (288, 448) 
+input_height = 288
+input_width = 448
 score_threshold = 0.45  
 nms_threshold = 0.2
 
@@ -68,7 +70,7 @@ def probiou(obb1, obb2, CIoU=False, eps=1e-7):
 
 def nms_rotated(boxes, nms_thresh):
     pred_boxes = []
-    import ipdb; ipdb.set_trace()
+    # import ipdb; ipdb.set_trace()
     sort_boxes = boxes # sorted(boxes, key=lambda x: x.score, reverse=True)
     for i in range(len(sort_boxes)):
         if sort_boxes[i][6]!= -1:
@@ -103,11 +105,11 @@ def filter_box(outputs):
     scores = [scores[i] for i in sorted_indices]
     class_ids = [class_ids[i] for i in sorted_indices]
     indices = nms_rotated(rotated_boxes, nms_threshold)
-    import ipdb;ipdb.set_trace()
+    # import ipdb;ipdb.set_trace()
     output = indices
     return output
 
-def letterbox(im, new_shape=(640, 640), color=(114, 114, 114)):
+def letterbox(im, new_shape=(288, 448), color=(114, 114, 114)):
     # Resize and pad image while meeting stride-multiple constraints
     shape = im.shape[:2]  # current shape [height, width]
 
@@ -115,15 +117,17 @@ def letterbox(im, new_shape=(640, 640), color=(114, 114, 114)):
     r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
     
     # Compute padding
-    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))    
-    dw, dh = (new_shape[1] - new_unpad[0])/2, (new_shape[0] - new_unpad[1])/2  # wh padding 
+    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    dw, dh = (new_shape[1] - new_unpad[0])/2, (new_shape[0] - new_unpad[1])/2  # wh padding
     top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
     
     if shape[::-1] != new_unpad:  # resize
         im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
     im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
-    return im
+    
+    # 返回处理后的图像和变换参数
+    return im, r, (left, top)
 
 def rotate_box(x, y, w, h, r):
     """
@@ -158,7 +162,7 @@ def rotate_box(x, y, w, h, r):
     
     return rotated_corners
 
-def draw_rotated_boxes(image, boxes, input_size, original_size, color=(0, 255, 0), thickness=2):
+def draw_rotated_boxes(image, boxes, input_size, original_size, scale_ratio, padding, color=(0, 255, 0), thickness=2):
     """
     在图像上绘制多个旋转框，并将坐标映射到原图大小。
     Args:
@@ -166,19 +170,23 @@ def draw_rotated_boxes(image, boxes, input_size, original_size, color=(0, 255, 0
         boxes: 一个包含多个框的列表，每个框是 (x, y, w, h, r)
         input_size: 输入图像的尺寸 (input_width, input_height)
         original_size: 原始图像的尺寸 (original_width, original_height)
+        scale_ratio: letterbox缩放比例
+        padding: letterbox填充偏移 (pad_left, pad_top)
         color: 绘制框的颜色 (B, G, R)
         thickness: 框的线条宽度
     """
     input_width, input_height = input_size
     original_width, original_height = original_size
-
+    pad_left, pad_top = padding
+    print(f"原图尺寸: {original_width}x{original_height}, 缩放比例: {scale_ratio}, 填充: {padding}")
+    
     for box in boxes:
-        x, y, w, h, r,_,_,_ = box  # 提取每个框的参数
+        x, y, w, h, r, _, _, _ = box  # 提取每个框的参数
         corners = rotate_box(x, y, w, h, r)
         
-        # 映射到原图大小
-        corners[:, 0] = (corners[:, 0] / input_width) * original_width
-        corners[:, 1] = (corners[:, 1] / input_height) * original_height
+        # 正确的坐标逆变换：先减去填充，再除以缩放比例
+        corners[:, 0] = (corners[:, 0] - pad_left) / scale_ratio
+        corners[:, 1] = (corners[:, 1] - pad_top) / scale_ratio
         
         # 将四个角点连接成一个多边形
         corners = corners.astype(int)
@@ -190,15 +198,17 @@ def draw_rotated_boxes(image, boxes, input_size, original_size, color=(0, 255, 0
     return image
 
 if __name__=="__main__":
-    image = cv2.imread('20240229092058567.bmp')
-    input = letterbox(image, input_shape)
+    image = cv2.imread('imgs/1.png')
+    original_size = (image.shape[1], image.shape[0])  # 获取原图实际尺寸 (width, height)
+    
+    input, scale_ratio, padding = letterbox(image, input_shape)
 
     input = input[:, :, ::-1].transpose(2, 0, 1).astype(dtype=np.float32)  #BGR2RGB和HWC2CHW
     input = input / 255.0
     input_tensor = []
-    input_tensor.append(input) # 1,3,640,640 need to be 1,1,640,640 if you 3 channel image input_tensor.append(input[np.newaxis,:,:,:])
+    input_tensor.append(input[np.newaxis,1,:,:]) # 1,3,288,448 need to be 1,1,288,448 if you 3 channel image input_tensor.append(input[np.newaxis,:,:,:])
     
-    onnx_session = onnxruntime.InferenceSession('output/qat.onnx', providers=['CPUExecutionProvider', 'CUDAExecutionProvider'])
+    onnx_session = onnxruntime.InferenceSession('imgs/bd_e2.3.10_20250522.onnx', providers=['CPUExecutionProvider', 'CUDAExecutionProvider'])
         
     input_name = []
     for node in onnx_session.get_inputs():
@@ -217,7 +227,6 @@ if __name__=="__main__":
     outputs = np.concatenate([outputs[0], outputs[1], outputs[2]], axis=1)
     boxes = filter_box(outputs)
 
-    input_size = (640, 640) # w h
-    original_size = (1280, 1280) # w h
-    draw_rotated_boxes(image, boxes,input_size, original_size)
-    cv2.imwrite('result.jpg', image)
+    input_size = (448, 288)  # 模型输入尺寸 (width, height)
+    draw_rotated_boxes(image, boxes, input_size, original_size, scale_ratio, padding)
+    cv2.imwrite('result2_mix.jpg', image)
